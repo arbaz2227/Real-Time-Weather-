@@ -1,0 +1,1248 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>ClimateSphere - 3D Weather Visualization</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script src="https://cdn.jsdelivr.net/npm/three@0.132.2/build/three.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/three@0.132.2/examples/js/controls/OrbitControls.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/three@0.132.2/examples/js/loaders/GLTFLoader.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/three@0.132.2/examples/js/geometries/TextGeometry.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/three@0.132.2/examples/js/fonts/helvetiker_regular.typeface.json"></script>
+    <script src="https://cdn.jsdelivr.net/npm/axios/dist/axios.min.js"></script>
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+    <style>
+        .weather-card:hover {
+            transform: translateY(-5px);
+            box-shadow: 0 10px 25px rgba(0,0,0,0.1);
+        }
+        
+        .rain-effect {
+            position: absolute;
+            width: 100%;
+            height: 100%;
+            background: url('data:image/svg+xml;utf8,<svg xmlns="http://www.w3.org/2000/svg" width="400" height="400" viewBox="0 0 400 400"><path d="M10,10 L10,40" stroke="rgba(255,255,255,0.5)" stroke-width="1" fill="none"/></svg>');
+            animation: rain 1s linear infinite;
+            opacity: 0;
+            pointer-events: none;
+        }
+        
+        .snow-effect {
+            position: absolute;
+            width: 100%;
+            height: 100%;
+            background: url('data:image/svg+xml;utf8,<svg xmlns="http://www.w3.org/2000/svg" width="400" height="400" viewBox="0 0 400 400"><path d="M20,20 L30,30 M30,20 L20,30 M25,15 L25,35 M15,25 L35,25" stroke="rgba(255,255,255,0.8)" stroke-width="1" fill="none"/></svg>');
+            animation: snow 10s linear infinite;
+            opacity: 0;
+            pointer-events: none;
+        }
+        
+        @keyframes rain {
+            0% { background-position: 0 0; }
+            100% { background-position: 0 400px; }
+        }
+        
+        @keyframes snow {
+            0% { background-position: 0 0; }
+            100% { background-position: 400px 400px; }
+        }
+        
+        .fog-effect {
+            position: absolute;
+            width: 100%;
+            height: 100%;
+            background: linear-gradient(to bottom, rgba(255,255,255,0) 0%, rgba(255,255,255,0.3) 100%);
+            animation: fog 20s linear infinite;
+            opacity: 0;
+            pointer-events: none;
+        }
+        
+        @keyframes fog {
+            0% { background-position: 0 0; }
+            100% { background-position: 0 100px; }
+        }
+        
+        .auth-modal {
+            transition: all 0.3s ease;
+            transform: translateY(20px);
+            opacity: 0;
+            visibility: hidden;
+        }
+        
+        .auth-modal.active {
+            transform: translateY(0);
+            opacity: 1;
+            visibility: visible;
+        }
+        
+        .floating {
+            animation: float 6s ease-in-out infinite;
+        }
+        
+        @keyframes float {
+            0% { transform: translateY(0px); }
+            50% { transform: translateY(-10px); }
+            100% { transform: translateY(0px); }
+        }
+        
+        .temperature-gauge {
+            height: 5px;
+            background: linear-gradient(to right, #3b82f6, #10b981, #f59e0b, #ef4444);
+        }
+        
+        .temperature-indicator {
+            width: 10px;
+            height: 10px;
+            background: white;
+            border-radius: 50%;
+            border: 2px solid #1f2937;
+            position: absolute;
+            top: -2px;
+            transform: translateX(-50%);
+        }
+    </style>
+</head>
+<body class="bg-gray-50 font-sans antialiased">
+    <!-- Weather Effects -->
+    <div id="weather-effects">
+        <div id="rain-effect" class="rain-effect"></div>
+        <div id="snow-effect" class="snow-effect"></div>
+        <div id="fog-effect" class="fog-effect"></div>
+    </div>
+    
+    <!-- Navigation -->
+    <nav class="bg-white/80 backdrop-blur-md shadow-sm sticky top-0 z-50">
+        <div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
+            <div class="flex justify-between items-center h-16">
+                <div class="flex items-center space-x-4">
+                    <div class="flex-shrink-0">
+                        <span class="text-xl font-bold bg-gradient-to-r from-blue-600 to-cyan-500 bg-clip-text text-transparent">ClimateSphere</span>
+                    </div>
+                    <div class="hidden md:block">
+                        <div class="ml-10 flex items-baseline space-x-4">
+                            <a href="#" class="px-3 py-2 rounded-md text-sm font-medium text-blue-600 bg-blue-50">Dashboard</a>
+                            <a href="#" class="px-3 py-2 rounded-md text-sm font-medium text-gray-600 hover:text-blue-600">Maps</a>
+                            <a href="#" class="px-3 py-2 rounded-md text-sm font-medium text-gray-600 hover:text-blue-600">Forecast</a>
+                            <a href="#" class="px-3 py-2 rounded-md text-sm font-medium text-gray-600 hover:text-blue-600">Alerts</a>
+                        </div>
+                    </div>
+                </div>
+                <div class="flex items-center space-x-4">
+                    <div class="relative hidden md:block">
+                        <input type="text" placeholder="Search location..." class="pl-10 pr-4 py-2 rounded-full border border-gray-300 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent text-sm w-64">
+                        <i class="fas fa-search absolute left-3 top-3 text-gray-400"></i>
+                    </div>
+                    <button id="user-menu" class="flex items-center space-x-2 text-gray-700 hover:text-blue-600">
+                        <div class="h-8 w-8 rounded-full bg-blue-100 flex items-center justify-center text-blue-600">
+                            <i class="fas fa-user"></i>
+                        </div>
+                        <span class="hidden md:inline text-sm font-medium">Guest</span>
+                    </button>
+                </div>
+            </div>
+        </div>
+    </nav>
+    
+    <!-- Main Content -->
+    <main class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-6">
+        <!-- Weather Overview -->
+        <section class="mb-8">
+            <div class="flex flex-col md:flex-row justify-between items-start md:items-center mb-6">
+                <div>
+                    <h1 class="text-2xl font-bold text-gray-900">Weather Dashboard</h1>
+                    <p class="text-gray-600" id="current-date">Loading date...</p>
+                </div>
+                <div class="mt-4 md:mt-0 flex space-x-3">
+                    <div class="relative">
+                        <select id="unit-selector" class="appearance-none bg-white border border-gray-300 rounded-md pl-3 pr-8 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent">
+                            <option value="metric">°C, km/h</option>
+                            <option value="imperial">°F, mph</option>
+                        </select>
+                        <div class="pointer-events-none absolute inset-y-0 right-0 flex items-center px-2 text-gray-700">
+                            <i class="fas fa-chevron-down text-xs"></i>
+                        </div>
+                    </div>
+                    <button id="refresh-weather" class="bg-blue-600 text-white px-4 py-2 rounded-md text-sm font-medium hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-offset-2">
+                        <i class="fas fa-sync-alt mr-2"></i> Refresh
+                    </button>
+                </div>
+            </div>
+            
+            <div class="grid grid-cols-1 md:grid-cols-3 gap-6">
+                <!-- Current Weather -->
+                <div class="bg-white rounded-xl shadow-md overflow-hidden">
+                    <div class="p-6">
+                        <div class="flex justify-between items-start">
+                            <div>
+                                <h2 class="text-xl font-bold text-gray-900" id="current-location">Loading location...</h2>
+                                <p class="text-gray-600" id="current-condition">--</p>
+                            </div>
+                            <div class="text-right">
+                                <span class="text-4xl font-bold text-gray-900" id="current-temp">--°</span>
+                                <p class="text-sm text-gray-600">Feels like <span id="current-feels-like">--°</span></p>
+                            </div>
+                        </div>
+                        
+                        <div class="mt-6 flex items-center justify-between">
+                            <div class="flex items-center space-x-4">
+                                <div id="current-weather-icon" class="text-5xl text-blue-500">
+                                    <i class="fas fa-sun"></i>
+                                </div>
+                                <div>
+                                    <p class="text-sm text-gray-600">Humidity: <span id="current-humidity">--%</span></p>
+                                    <p class="text-sm text-gray-600">Wind: <span id="current-wind">-- km/h</span></p>
+                                </div>
+                            </div>
+                            <div class="text-right">
+                                <p class="text-sm text-gray-600">High: <span id="current-high">--°</span></p>
+                                <p class="text-sm text-gray-600">Low: <span id="current-low">--°</span></p>
+                            </div>
+                        </div>
+                        
+                        <div class="mt-6">
+                            <div class="temperature-gauge relative rounded-full overflow-hidden">
+                                <div id="temp-indicator" class="temperature-indicator" style="left: 50%;"></div>
+                            </div>
+                            <div class="flex justify-between text-xs text-gray-600 mt-1">
+                                <span>-20°</span>
+                                <span>0°</span>
+                                <span>20°</span>
+                                <span>40°</span>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+                
+                <!-- 3D Globe -->
+                <div class="bg-white rounded-xl shadow-md overflow-hidden relative">
+                    <div id="globe-container" class="h-full w-full min-h-[300px]"></div>
+                    <div class="absolute bottom-4 left-4 flex space-x-2">
+                        <button id="globe-rotate" class="bg-white/80 p-2 rounded-full shadow-md hover:bg-white">
+                            <i class="fas fa-undo text-gray-700"></i>
+                        </button>
+                        <button id="globe-zoom-in" class="bg-white/80 p-2 rounded-full shadow-md hover:bg-white">
+                            <i class="fas fa-search-plus text-gray-700"></i>
+                        </button>
+                        <button id="globe-zoom-out" class="bg-white/80 p-2 rounded-full shadow-md hover:bg-white">
+                            <i class="fas fa-search-minus text-gray-700"></i>
+                        </button>
+                    </div>
+                </div>
+                
+                <!-- Weather Alerts -->
+                <div class="bg-white rounded-xl shadow-md overflow-hidden">
+                    <div class="p-6">
+                        <div class="flex justify-between items-center mb-4">
+                            <h2 class="text-xl font-bold text-gray-900">Weather Alerts</h2>
+                            <button class="text-blue-600 hover:text-blue-800 text-sm font-medium">
+                                <i class="fas fa-bell mr-1"></i> Manage
+                            </button>
+                        </div>
+                        
+                        <div id="alerts-container" class="space-y-4">
+                            <div class="flex items-start p-3 bg-yellow-50 rounded-lg">
+                                <div class="flex-shrink-0 mt-1">
+                                    <div class="h-6 w-6 rounded-full bg-yellow-400 flex items-center justify-center text-white">
+                                        <i class="fas fa-exclamation text-xs"></i>
+                                    </div>
+                                </div>
+                                <div class="ml-3">
+                                    <h3 class="text-sm font-medium text-yellow-800">Heat Advisory</h3>
+                                    <p class="text-sm text-yellow-700">Extreme heat expected tomorrow. Limit outdoor activities.</p>
+                                </div>
+                            </div>
+                            
+                            <div class="flex items-start p-3 bg-blue-50 rounded-lg">
+                                <div class="flex-shrink-0 mt-1">
+                                    <div class="h-6 w-6 rounded-full bg-blue-400 flex items-center justify-center text-white">
+                                        <i class="fas fa-cloud-rain text-xs"></i>
+                                    </div>
+                                </div>
+                                <div class="ml-3">
+                                    <h3 class="text-sm font-medium text-blue-800">Rain Expected</h3>
+                                    <p class="text-sm text-blue-700">Heavy rainfall expected in your area this weekend.</p>
+                                </div>
+                            </div>
+                        </div>
+                        
+                        <button class="mt-4 w-full bg-blue-50 text-blue-600 py-2 px-4 rounded-md text-sm font-medium hover:bg-blue-100 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-offset-2">
+                            View All Alerts
+                        </button>
+                    </div>
+                </div>
+            </div>
+        </section>
+        
+        <!-- Hourly Forecast -->
+        <section class="mb-8">
+            <div class="flex justify-between items-center mb-4">
+                <h2 class="text-xl font-bold text-gray-900">Hourly Forecast</h2>
+                <button class="text-blue-600 hover:text-blue-800 text-sm font-medium">
+                    <i class="fas fa-chevron-right mr-1"></i> Next 48 Hours
+                </button>
+            </div>
+            
+            <div class="bg-white rounded-xl shadow-md overflow-hidden">
+                <div class="p-6">
+                    <div id="hourly-forecast" class="flex overflow-x-auto pb-2 -mx-2">
+                        <!-- Hourly forecast items will be added here -->
+                        <div class="text-center px-4">
+                            <p class="text-sm text-gray-600">Now</p>
+                            <div class="my-2 text-blue-500 text-xl">
+                                <i class="fas fa-sun"></i>
+                            </div>
+                            <p class="text-sm font-medium">24°</p>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </section>
+        
+        <!-- Weekly Forecast -->
+        <section class="mb-8">
+            <div class="flex justify-between items-center mb-4">
+                <h2 class="text-xl font-bold text-gray-900">7-Day Forecast</h2>
+                <button class="text-blue-600 hover:text-blue-800 text-sm font-medium">
+                    <i class="fas fa-calendar-alt mr-1"></i> View Calendar
+                </button>
+            </div>
+            
+            <div class="bg-white rounded-xl shadow-md overflow-hidden">
+                <div class="divide-y divide-gray-200">
+                    <!-- Daily forecast items will be added here -->
+                    <div class="p-4 flex items-center justify-between">
+                        <div class="w-24">
+                            <p class="font-medium">Today</p>
+                            <p class="text-sm text-gray-600">Jun 12</p>
+                        </div>
+                        <div class="flex-1 flex items-center justify-center space-x-4">
+                            <div class="text-blue-500">
+                                <i class="fas fa-sun text-xl"></i>
+                            </div>
+                            <div class="text-sm text-gray-600">Sunny</div>
+                        </div>
+                        <div class="flex items-center space-x-4">
+                            <span class="text-sm font-medium">28°</span>
+                            <span class="text-sm text-gray-600">18°</span>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </section>
+        
+        <!-- Weather Maps -->
+        <section>
+            <div class="flex justify-between items-center mb-4">
+                <h2 class="text-xl font-bold text-gray-900">Interactive Weather Maps</h2>
+                <button class="text-blue-600 hover:text-blue-800 text-sm font-medium">
+                    <i class="fas fa-layer-group mr-1"></i> More Layers
+                </button>
+            </div>
+            
+            <div class="grid grid-cols-1 md:grid-cols-2 gap-6">
+                <div class="bg-white rounded-xl shadow-md overflow-hidden">
+                    <div class="p-4 border-b border-gray-200">
+                        <h3 class="font-medium text-gray-900">Temperature Map</h3>
+                    </div>
+                    <div id="temp-map" class="h-64 w-full bg-gray-100 flex items-center justify-center">
+                        <div class="text-center">
+                            <i class="fas fa-map-marked-alt text-4xl text-gray-400 mb-2"></i>
+                            <p class="text-gray-600">Loading temperature map...</p>
+                        </div>
+                    </div>
+                </div>
+                
+                <div class="bg-white rounded-xl shadow-md overflow-hidden">
+                    <div class="p-4 border-b border-gray-200">
+                        <h3 class="font-medium text-gray-900">Precipitation Map</h3>
+                    </div>
+                    <div id="precip-map" class="h-64 w-full bg-gray-100 flex items-center justify-center">
+                        <div class="text-center">
+                            <i class="fas fa-cloud-rain text-4xl text-gray-400 mb-2"></i>
+                            <p class="text-gray-600">Loading precipitation map...</p>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </section>
+    </main>
+    
+    <!-- Auth Modal -->
+    <div id="auth-modal" class="auth-modal fixed inset-0 z-50 flex items-center justify-center p-4">
+        <div class="fixed inset-0 bg-black/50 backdrop-blur-sm" id="auth-overlay"></div>
+        <div class="bg-white rounded-xl shadow-xl w-full max-w-md relative z-10">
+            <div class="p-6">
+                <div class="flex justify-between items-center mb-6">
+                    <h2 class="text-2xl font-bold text-gray-900">Sign In</h2>
+                    <button id="close-auth" class="text-gray-500 hover:text-gray-700">
+                        <i class="fas fa-times"></i>
+                    </button>
+                </div>
+                
+                <div class="space-y-4">
+                    <div>
+                        <label for="email" class="block text-sm font-medium text-gray-700 mb-1">Email</label>
+                        <input type="email" id="email" class="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent" placeholder="your@email.com">
+                    </div>
+                    
+                    <div>
+                        <label for="password" class="block text-sm font-medium text-gray-700 mb-1">Password</label>
+                        <input type="password" id="password" class="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent" placeholder="••••••••">
+                    </div>
+                    
+                    <div class="flex items-center justify-between">
+                        <div class="flex items-center">
+                            <input id="remember-me" type="checkbox" class="h-4 w-4 text-blue-600 focus:ring-blue-500 border-gray-300 rounded">
+                            <label for="remember-me" class="ml-2 block text-sm text-gray-700">Remember me</label>
+                        </div>
+                        <a href="#" class="text-sm text-blue-600 hover:text-blue-800">Forgot password?</a>
+                    </div>
+                    
+                    <button id="signin-btn" class="w-full bg-blue-600 text-white py-2 px-4 rounded-md font-medium hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-offset-2">
+                        Sign In
+                    </button>
+                    
+                    <div class="text-center text-sm text-gray-600">
+                        Don't have an account? <a href="#" id="switch-to-signup" class="text-blue-600 hover:text-blue-800">Sign up</a>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+    
+    <!-- Sign Up Modal -->
+    <div id="signup-modal" class="auth-modal fixed inset-0 z-50 flex items-center justify-center p-4">
+        <div class="fixed inset-0 bg-black/50 backdrop-blur-sm" id="signup-overlay"></div>
+        <div class="bg-white rounded-xl shadow-xl w-full max-w-md relative z-10">
+            <div class="p-6">
+                <div class="flex justify-between items-center mb-6">
+                    <h2 class="text-2xl font-bold text-gray-900">Create Account</h2>
+                    <button id="close-signup" class="text-gray-500 hover:text-gray-700">
+                        <i class="fas fa-times"></i>
+                    </button>
+                </div>
+                
+                <div class="space-y-4">
+                    <div>
+                        <label for="signup-name" class="block text-sm font-medium text-gray-700 mb-1">Full Name</label>
+                        <input type="text" id="signup-name" class="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent" placeholder="John Doe">
+                    </div>
+                    
+                    <div>
+                        <label for="signup-email" class="block text-sm font-medium text-gray-700 mb-1">Email</label>
+                        <input type="email" id="signup-email" class="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent" placeholder="your@email.com">
+                    </div>
+                    
+                    <div>
+                        <label for="signup-password" class="block text-sm font-medium text-gray-700 mb-1">Password</label>
+                        <input type="password" id="signup-password" class="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent" placeholder="••••••••">
+                    </div>
+                    
+                    <div>
+                        <label for="signup-confirm" class="block text-sm font-medium text-gray-700 mb-1">Confirm Password</label>
+                        <input type="password" id="signup-confirm" class="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent" placeholder="••••••••">
+                    </div>
+                    
+                    <div class="flex items-center">
+                        <input id="terms" type="checkbox" class="h-4 w-4 text-blue-600 focus:ring-blue-500 border-gray-300 rounded">
+                        <label for="terms" class="ml-2 block text-sm text-gray-700">I agree to the <a href="#" class="text-blue-600 hover:text-blue-800">Terms</a> and <a href="#" class="text-blue-600 hover:text-blue-800">Privacy Policy</a></label>
+                    </div>
+                    
+                    <button id="signup-btn" class="w-full bg-blue-600 text-white py-2 px-4 rounded-md font-medium hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-offset-2">
+                        Create Account
+                    </button>
+                    
+                    <div class="text-center text-sm text-gray-600">
+                        Already have an account? <a href="#" id="switch-to-signin" class="text-blue-600 hover:text-blue-800">Sign in</a>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+    
+    <script>
+        // Weather Data and State
+        let weatherData = {
+            current: null,
+            hourly: [],
+            daily: [],
+            units: 'metric',
+            userLocation: null
+        };
+        
+        // Authentication State
+        let authState = {
+            isAuthenticated: false,
+            user: null
+        };
+        
+        // DOM Elements
+        const elements = {
+            currentLocation: document.getElementById('current-location'),
+            currentDate: document.getElementById('current-date'),
+            currentCondition: document.getElementById('current-condition'),
+            currentTemp: document.getElementById('current-temp'),
+            currentFeelsLike: document.getElementById('current-feels-like'),
+            currentHumidity: document.getElementById('current-humidity'),
+            currentWind: document.getElementById('current-wind'),
+            currentHigh: document.getElementById('current-high'),
+            currentLow: document.getElementById('current-low'),
+            currentWeatherIcon: document.getElementById('current-weather-icon'),
+            tempIndicator: document.getElementById('temp-indicator'),
+            hourlyForecast: document.getElementById('hourly-forecast'),
+            unitSelector: document.getElementById('unit-selector'),
+            refreshWeather: document.getElementById('refresh-weather'),
+            userMenu: document.getElementById('user-menu'),
+            authModal: document.getElementById('auth-modal'),
+            authOverlay: document.getElementById('auth-overlay'),
+            closeAuth: document.getElementById('close-auth'),
+            signinBtn: document.getElementById('signin-btn'),
+            signupModal: document.getElementById('signup-modal'),
+            signupOverlay: document.getElementById('signup-overlay'),
+            closeSignup: document.getElementById('close-signup'),
+            signupBtn: document.getElementById('signup-btn'),
+            switchToSignup: document.getElementById('switch-to-signup'),
+            switchToSignin: document.getElementById('switch-to-signin'),
+            weatherEffects: {
+                rain: document.getElementById('rain-effect'),
+                snow: document.getElementById('snow-effect'),
+                fog: document.getElementById('fog-effect')
+            }
+        };
+        
+        // Initialize 3D Globe
+        function initGlobe() {
+            const container = document.getElementById('globe-container');
+            const width = container.clientWidth;
+            const height = container.clientHeight;
+            
+            // Create scene
+            const scene = new THREE.Scene();
+            scene.background = new THREE.Color(0xf0f4f8);
+            
+            // Create camera
+            const camera = new THREE.PerspectiveCamera(75, width / height, 0.1, 1000);
+            camera.position.z = 5;
+            
+            // Create renderer
+            const renderer = new THREE.WebGLRenderer({ antialias: true });
+            renderer.setSize(width, height);
+            container.appendChild(renderer.domElement);
+            
+            // Add lights
+            const ambientLight = new THREE.AmbientLight(0xffffff, 0.5);
+            scene.add(ambientLight);
+            
+            const directionalLight = new THREE.DirectionalLight(0xffffff, 0.8);
+            directionalLight.position.set(5, 5, 5);
+            scene.add(directionalLight);
+            
+            // Create earth sphere
+            const geometry = new THREE.SphereGeometry(2, 64, 64);
+            
+            // Load texture for earth
+            const textureLoader = new THREE.TextureLoader();
+            const earthTexture = textureLoader.load('https://threejs.org/examples/textures/planets/earth_atmos_2048.jpg');
+            const bumpMap = textureLoader.load('https://threejs.org/examples/textures/planets/earth_normal_2048.jpg');
+            const specularMap = textureLoader.load('https://threejs.org/examples/textures/planets/earth_specular_2048.jpg');
+            
+            const material = new THREE.MeshPhongMaterial({
+                map: earthTexture,
+                bumpMap: bumpMap,
+                bumpScale: 0.05,
+                specularMap: specularMap,
+                specular: new THREE.Color('grey'),
+                shininess: 5
+            });
+            
+            const earth = new THREE.Mesh(geometry, material);
+            scene.add(earth);
+            
+            // Add clouds
+            const cloudGeometry = new THREE.SphereGeometry(2.05, 64, 64);
+            const cloudTexture = textureLoader.load('https://threejs.org/examples/textures/planets/earth_clouds_1024.png');
+            const cloudMaterial = new THREE.MeshPhongMaterial({
+                map: cloudTexture,
+                transparent: true,
+                opacity: 0.4
+            });
+            
+            const clouds = new THREE.Mesh(cloudGeometry, cloudMaterial);
+            scene.add(clouds);
+            
+            // Add controls
+            const controls = new THREE.OrbitControls(camera, renderer.domElement);
+            controls.enableDamping = true;
+            controls.dampingFactor = 0.05;
+            controls.minDistance = 3;
+            controls.maxDistance = 10;
+            
+            // Add button controls
+            document.getElementById('globe-rotate').addEventListener('click', () => {
+                earth.rotation.y += 0.5;
+                clouds.rotation.y += 0.5;
+            });
+            
+            document.getElementById('globe-zoom-in').addEventListener('click', () => {
+                camera.position.z -= 0.5;
+            });
+            
+            document.getElementById('globe-zoom-out').addEventListener('click', () => {
+                camera.position.z += 0.5;
+            });
+            
+            // Animation loop
+            function animate() {
+                requestAnimationFrame(animate);
+                
+                // Rotate earth and clouds slowly
+                earth.rotation.y += 0.001;
+                clouds.rotation.y += 0.0015;
+                
+                controls.update();
+                renderer.render(scene, camera);
+            }
+            
+            animate();
+            
+            // Handle window resize
+            window.addEventListener('resize', () => {
+                const newWidth = container.clientWidth;
+                const newHeight = container.clientHeight;
+                
+                camera.aspect = newWidth / newHeight;
+                camera.updateProjectionMatrix();
+                
+                renderer.setSize(newWidth, newHeight);
+            });
+        }
+        
+        // Initialize Temperature Map
+        function initTempMap() {
+            const container = document.getElementById('temp-map');
+            const width = container.clientWidth;
+            const height = container.clientHeight;
+            
+            // Create scene
+            const scene = new THREE.Scene();
+            scene.background = new THREE.Color(0xf0f4f8);
+            
+            // Create camera
+            const camera = new THREE.PerspectiveCamera(75, width / height, 0.1, 1000);
+            camera.position.z = 5;
+            
+            // Create renderer
+            const renderer = new THREE.WebGLRenderer({ antialias: true });
+            renderer.setSize(width, height);
+            container.innerHTML = '';
+            container.appendChild(renderer.domElement);
+            
+            // Add lights
+            const ambientLight = new THREE.AmbientLight(0xffffff, 0.5);
+            scene.add(ambientLight);
+            
+            const directionalLight = new THREE.DirectionalLight(0xffffff, 0.8);
+            directionalLight.position.set(5, 5, 5);
+            scene.add(directionalLight);
+            
+            // Create plane for temperature map
+            const geometry = new THREE.PlaneGeometry(8, 4);
+            
+            // Create gradient texture for temperature
+            const canvas = document.createElement('canvas');
+            canvas.width = 256;
+            canvas.height = 1;
+            const ctx = canvas.getContext('2d');
+            
+            const gradient = ctx.createLinearGradient(0, 0, 256, 0);
+            gradient.addColorStop(0, '#3b82f6'); // Cold (blue)
+            gradient.addColorStop(0.5, '#10b981'); // Moderate (green)
+            gradient.addColorStop(0.75, '#f59e0b'); // Warm (yellow)
+            gradient.addColorStop(1, '#ef4444'); // Hot (red)
+            
+            ctx.fillStyle = gradient;
+            ctx.fillRect(0, 0, 256, 1);
+            
+            const texture = new THREE.CanvasTexture(canvas);
+            const material = new THREE.MeshBasicMaterial({ 
+                map: texture,
+                side: THREE.DoubleSide
+            });
+            
+            const plane = new THREE.Mesh(geometry, material);
+            scene.add(plane);
+            
+            // Add legend
+            const legendGeometry = new THREE.PlaneGeometry(7, 0.5);
+            const legendMaterial = new THREE.MeshBasicMaterial({ 
+                color: 0xffffff,
+                side: THREE.DoubleSide,
+                transparent: true,
+                opacity: 0.8
+            });
+            
+            const legend = new THREE.Mesh(legendGeometry, legendMaterial);
+            legend.position.y = -2.5;
+            scene.add(legend);
+            
+            // Add legend text
+            const loader = new THREE.FontLoader();
+            loader.load('https://cdn.jsdelivr.net/npm/three@0.132.2/examples/fonts/helvetiker_regular.typeface.json', function(font) {
+                const textGeometry = new THREE.TextGeometry('Cold                                                                                          Hot', {
+                    font: font,
+                    size: 0.2,
+                    height: 0.01
+                });
+                
+                const textMaterial = new THREE.MeshBasicMaterial({ color: 0x1f2937 });
+                const text = new THREE.Mesh(textGeometry, textMaterial);
+                text.position.set(-3.5, -2.5, 0.1);
+                scene.add(text);
+                
+                // Add temperature markers
+                const markers = [-20, 0, 20, 40];
+                markers.forEach((temp, i) => {
+                    const markerGeometry = new THREE.TextGeometry(temp + '°', {
+                        font: font,
+                        size: 0.15,
+                        height: 0.01
+                    });
+                    
+                    const markerMaterial = new THREE.MeshBasicMaterial({ color: 0x1f2937 });
+                    const marker = new THREE.Mesh(markerGeometry, markerMaterial);
+                    marker.position.set(-3.5 + (i * 2.33), -2.7, 0.1);
+                    scene.add(marker);
+                });
+            });
+            
+            // Animation loop
+            function animate() {
+                requestAnimationFrame(animate);
+                renderer.render(scene, camera);
+            }
+            
+            animate();
+            
+            // Handle window resize
+            window.addEventListener('resize', () => {
+                const newWidth = container.clientWidth;
+                const newHeight = container.clientHeight;
+                
+                camera.aspect = newWidth / newHeight;
+                camera.updateProjectionMatrix();
+                
+                renderer.setSize(newWidth, newHeight);
+            });
+        }
+        
+        // Initialize Precipitation Map
+        function initPrecipMap() {
+            const container = document.getElementById('precip-map');
+            const width = container.clientWidth;
+            const height = container.clientHeight;
+            
+            // Create scene
+            const scene = new THREE.Scene();
+            scene.background = new THREE.Color(0xf0f4f8);
+            
+            // Create camera
+            const camera = new THREE.PerspectiveCamera(75, width / height, 0.1, 1000);
+            camera.position.z = 5;
+            
+            // Create renderer
+            const renderer = new THREE.WebGLRenderer({ antialias: true });
+            renderer.setSize(width, height);
+            container.innerHTML = '';
+            container.appendChild(renderer.domElement);
+            
+            // Add lights
+            const ambientLight = new THREE.AmbientLight(0xffffff, 0.5);
+            scene.add(ambientLight);
+            
+            const directionalLight = new THREE.DirectionalLight(0xffffff, 0.8);
+            directionalLight.position.set(5, 5, 5);
+            scene.add(directionalLight);
+            
+            // Create plane for precipitation map
+            const geometry = new THREE.PlaneGeometry(8, 4);
+            
+            // Create gradient texture for precipitation
+            const canvas = document.createElement('canvas');
+            canvas.width = 256;
+            canvas.height = 1;
+            const ctx = canvas.getContext('2d');
+            
+            const gradient = ctx.createLinearGradient(0, 0, 256, 0);
+            gradient.addColorStop(0, '#f0f4f8'); // None (light gray)
+            gradient.addColorStop(0.5, '#93c5fd'); // Light (light blue)
+            gradient.addColorStop(0.75, '#3b82f6'); // Moderate (blue)
+            gradient.addColorStop(1, '#1d4ed8'); // Heavy (dark blue)
+            
+            ctx.fillStyle = gradient;
+            ctx.fillRect(0, 0, 256, 1);
+            
+            const texture = new THREE.CanvasTexture(canvas);
+            const material = new THREE.MeshBasicMaterial({ 
+                map: texture,
+                side: THREE.DoubleSide
+            });
+            
+            const plane = new THREE.Mesh(geometry, material);
+            scene.add(plane);
+            
+            // Add legend
+            const legendGeometry = new THREE.PlaneGeometry(7, 0.5);
+            const legendMaterial = new THREE.MeshBasicMaterial({ 
+                color: 0xffffff,
+                side: THREE.DoubleSide,
+                transparent: true,
+                opacity: 0.8
+            });
+            
+            const legend = new THREE.Mesh(legendGeometry, legendMaterial);
+            legend.position.y = -2.5;
+            scene.add(legend);
+            
+            // Add legend text
+            const loader = new THREE.FontLoader();
+            loader.load('https://cdn.jsdelivr.net/npm/three@0.132.2/examples/fonts/helvetiker_regular.typeface.json', function(font) {
+                const textGeometry = new THREE.TextGeometry('None                                                                                       Heavy', {
+                    font: font,
+                    size: 0.2,
+                    height: 0.01
+                });
+                
+                const textMaterial = new THREE.MeshBasicMaterial({ color: 0x1f2937 });
+                const text = new THREE.Mesh(textGeometry, textMaterial);
+                text.position.set(-3.5, -2.5, 0.1);
+                scene.add(text);
+                
+                // Add precipitation markers
+                const markers = ['None', 'Light', 'Moderate', 'Heavy'];
+                markers.forEach((precip, i) => {
+                    const markerGeometry = new THREE.TextGeometry(precip, {
+                        font: font,
+                        size: 0.15,
+                        height: 0.01
+                    });
+                    
+                    const markerMaterial = new THREE.MeshBasicMaterial({ color: 0x1f2937 });
+                    const marker = new THREE.Mesh(markerGeometry, markerMaterial);
+                    marker.position.set(-3.5 + (i * 2.33), -2.7, 0.1);
+                    scene.add(marker);
+                });
+            });
+            
+            // Add animated rain particles
+            const particlesGeometry = new THREE.BufferGeometry();
+            const particlesCount = 500;
+            
+            const posArray = new Float32Array(particlesCount * 3);
+            for(let i = 0; i < particlesCount * 3; i++) {
+                posArray[i] = (Math.random() - 0.5) * 8;
+            }
+            
+            particlesGeometry.setAttribute('position', new THREE.BufferAttribute(posArray, 3));
+            
+            const particlesMaterial = new THREE.PointsMaterial({
+                size: 0.05,
+                color: 0x3b82f6,
+                transparent: true,
+                opacity: 0.8
+            });
+            
+            const particlesMesh = new THREE.Points(particlesGeometry, particlesMaterial);
+            particlesMesh.position.z = 0.1;
+            scene.add(particlesMesh);
+            
+            // Animation loop
+            function animate() {
+                requestAnimationFrame(animate);
+                
+                // Animate rain particles
+                particlesMesh.rotation.z += 0.001;
+                
+                const positions = particlesMesh.geometry.attributes.position.array;
+                for(let i = 0; i < particlesCount * 3; i += 3) {
+                    positions[i + 1] -= 0.01;
+                    
+                    if(positions[i + 1] < -2) {
+                        positions[i + 1] = 2;
+                    }
+                }
+                
+                particlesMesh.geometry.attributes.position.needsUpdate = true;
+                
+                renderer.render(scene, camera);
+            }
+            
+            animate();
+            
+            // Handle window resize
+            window.addEventListener('resize', () => {
+                const newWidth = container.clientWidth;
+                const newHeight = container.clientHeight;
+                
+                camera.aspect = newWidth / newHeight;
+                camera.updateProjectionMatrix();
+                
+                renderer.setSize(newWidth, newHeight);
+            });
+        }
+        
+        // Get Weather Data
+        async function fetchWeatherData(location = 'New York', units = 'metric') {
+            try {
+                // Simulate API call with mock data
+                // In a real app, you would use a weather API like OpenWeatherMap
+                console.log(`Fetching weather data for ${location} in ${units} units...`);
+                
+                // Mock data for demonstration
+                const mockWeatherData = {
+                    current: {
+                        temp: 24,
+                        feels_like: 26,
+                        humidity: 65,
+                        wind_speed: 12,
+                        weather: [{ description: 'Partly cloudy', main: 'Clouds', icon: '03d' }],
+                        temp_max: 28,
+                        temp_min: 18
+                    },
+                    hourly: Array(24).fill().map((_, i) => ({
+                        dt: Math.floor(Date.now() / 1000) + (i * 3600),
+                        temp: 20 + Math.sin(i / 4) * 8,
+                        weather: [{ 
+                            description: i < 6 || i > 18 ? 'Clear' : i % 3 === 0 ? 'Rain' : 'Clouds',
+                            main: i < 6 || i > 18 ? 'Clear' : i % 3 === 0 ? 'Rain' : 'Clouds',
+                            icon: i < 6 || i > 18 ? '01n' : i % 3 === 0 ? '10d' : '03d'
+                        }]
+                    })),
+                    daily: Array(7).fill().map((_, i) => ({
+                        dt: Math.floor(Date.now() / 1000) + (i * 86400),
+                        temp: {
+                            max: 25 + Math.sin(i) * 5,
+                            min: 15 + Math.sin(i) * 3
+                        },
+                        weather: [{ 
+                            description: i % 2 === 0 ? 'Sunny' : 'Partly cloudy',
+                            main: i % 2 === 0 ? 'Clear' : 'Clouds',
+                            icon: i % 2 === 0 ? '01d' : '03d'
+                        }]
+                    }))
+                };
+                
+                weatherData.current = mockWeatherData.current;
+                weatherData.hourly = mockWeatherData.hourly;
+                weatherData.daily = mockWeatherData.daily;
+                weatherData.units = units;
+                weatherData.userLocation = location;
+                
+                updateWeatherUI();
+                updateWeatherEffects(mockWeatherData.current.weather[0].main);
+                
+                return mockWeatherData;
+            } catch (error) {
+                console.error('Error fetching weather data:', error);
+                return null;
+            }
+        }
+        
+        // Update Weather UI
+        function updateWeatherUI() {
+            if (!weatherData.current) return;
+            
+            // Update current weather
+            elements.currentLocation.textContent = weatherData.userLocation;
+            elements.currentDate.textContent = new Date().toLocaleDateString('en-US', { 
+                weekday: 'long', 
+                year: 'numeric', 
+                month: 'long', 
+                day: 'numeric' 
+            });
+            
+            elements.currentCondition.textContent = weatherData.current.weather[0].description;
+            elements.currentTemp.textContent = `${Math.round(weatherData.current.temp)}°`;
+            elements.currentFeelsLike.textContent = `${Math.round(weatherData.current.feels_like)}°`;
+            elements.currentHumidity.textContent = `${weatherData.current.humidity}%`;
+            
+            const windSpeed = weatherData.units === 'metric' 
+                ? `${weatherData.current.wind_speed} km/h` 
+                : `${(weatherData.current.wind_speed * 0.621371).toFixed(1)} mph`;
+            
+            elements.currentWind.textContent = windSpeed;
+            elements.currentHigh.textContent = `${Math.round(weatherData.current.temp_max)}°`;
+            elements.currentLow.textContent = `${Math.round(weatherData.current.temp_min)}°`;
+            
+            // Update weather icon
+            const weatherIcon = getWeatherIcon(weatherData.current.weather[0].main, weatherData.current.weather[0].icon);
+            elements.currentWeatherIcon.innerHTML = `<i class="fas fa-${weatherIcon}"></i>`;
+            
+            // Update temperature indicator
+            const temp = weatherData.current.temp;
+            const position = ((temp + 20) / 60) * 100; // Scale from -20 to 40°C
+            elements.tempIndicator.style.left = `${position}%`;
+            
+            // Update hourly forecast
+            elements.hourlyForecast.innerHTML = '';
+            weatherData.hourly.slice(0, 12).forEach((hour, i) => {
+                const time = new Date(hour.dt * 1000);
+                const hourStr = i === 0 ? 'Now' : time.getHours() + ':00';
+                
+                const weatherIcon = getWeatherIcon(hour.weather[0].main, hour.weather[0].icon);
+                const temp = Math.round(hour.temp);
+                
+                const hourElement = document.createElement('div');
+                hourElement.className = 'flex-shrink-0 text-center px-4';
+                hourElement.innerHTML = `
+                    <p class="text-sm text-gray-600">${hourStr}</p>
+                    <div class="my-2 text-blue-500 text-xl">
+                        <i class="fas fa-${weatherIcon}"></i>
+                    </div>
+                    <p class="text-sm font-medium">${temp}°</p>
+                `;
+                
+                elements.hourlyForecast.appendChild(hourElement);
+            });
+            
+            // Update daily forecast
+            const dailyContainer = document.querySelector('.divide-y.divide-gray-200');
+            dailyContainer.innerHTML = '';
+            
+            weatherData.daily.forEach((day, i) => {
+                const date = new Date(day.dt * 1000);
+                const dayStr = i === 0 ? 'Today' : date.toLocaleDateString('en-US', { weekday: 'short' });
+                const dateStr = date.toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
+                
+                const weatherIcon = getWeatherIcon(day.weather[0].main, day.weather[0].icon);
+                const maxTemp = Math.round(day.temp.max);
+                const minTemp = Math.round(day.temp.min);
+                
+                const dayElement = document.createElement('div');
+                dayElement.className = 'p-4 flex items-center justify-between';
+                dayElement.innerHTML = `
+                    <div class="w-24">
+                        <p class="font-medium">${dayStr}</p>
+                        <p class="text-sm text-gray-600">${dateStr}</p>
+                    </div>
+                    <div class="flex-1 flex items-center justify-center space-x-4">
+                        <div class="text-blue-500">
+                            <i class="fas fa-${weatherIcon} text-xl"></i>
+                        </div>
+                        <div class="text-sm text-gray-600">${day.weather[0].description}</div>
+                    </div>
+                    <div class="flex items-center space-x-4">
+                        <span class="text-sm font-medium">${maxTemp}°</span>
+                        <span class="text-sm text-gray-600">${minTemp}°</span>
+                    </div>
+                `;
+                
+                dailyContainer.appendChild(dayElement);
+            });
+        }
+        
+        // Get appropriate weather icon
+        function getWeatherIcon(main, icon) {
+            const isDay = icon.includes('d');
+            
+            switch(main) {
+                case 'Clear':
+                    return isDay ? 'sun' : 'moon';
+                case 'Clouds':
+                    return 'cloud';
+                case 'Rain':
+                    return 'cloud-rain';
+                case 'Thunderstorm':
+                    return 'bolt';
+                case 'Snow':
+                    return 'snowflake';
+                case 'Mist':
+                case 'Fog':
+                case 'Haze':
+                    return 'smog';
+                default:
+                    return 'cloud-sun';
+            }
+        }
+        
+        // Update weather effects based on current weather
+        function updateWeatherEffects(weatherCondition) {
+            // Reset all effects
+            Object.values(elements.weatherEffects).forEach(effect => {
+                effect.style.opacity = '0';
+            });
+            
+            // Apply appropriate effect
+            switch(weatherCondition) {
+                case 'Rain':
+                case 'Thunderstorm':
+                    elements.weatherEffects.rain.style.opacity = '1';
+                    break;
+                case 'Snow':
+                    elements.weatherEffects.snow.style.opacity = '1';
+                    break;
+                case 'Fog':
+                case 'Mist':
+                case 'Haze':
+                    elements.weatherEffects.fog.style.opacity = '0.5';
+                    break;
+            }
+        }
+        
+        // Authentication Functions
+        function setupAuth() {
+            // Toggle auth modal
+            elements.userMenu.addEventListener('click', () => {
+                if (authState.isAuthenticated) {
+                    // Show user menu dropdown
+                    console.log('Show user menu dropdown');
+                } else {
+                    elements.authModal.classList.add('active');
+                }
+            });
+            
+            elements.authOverlay.addEventListener('click', () => {
+                elements.authModal.classList.remove('active');
+            });
+            
+            elements.closeAuth.addEventListener('click', () => {
+                elements.authModal.classList.remove('active');
+            });
+            
+            elements.signupOverlay.addEventListener('click', () => {
+                elements.signupModal.classList.remove('active');
+            });
+            
+            elements.closeSignup.addEventListener('click', () => {
+                elements.signupModal.classList.remove('active');
+            });
+            
+            // Switch between sign in and sign up
+            elements.switchToSignup.addEventListener('click', (e) => {
+                e.preventDefault();
+                elements.authModal.classList.remove('active');
+                elements.signupModal.classList.add('active');
+            });
+            
+            elements.switchToSignin.addEventListener('click', (e) => {
+                e.preventDefault();
+                elements.signupModal.classList.remove('active');
+                elements.authModal.classList.add('active');
+            });
+            
+            // Sign in button
+            elements.signinBtn.addEventListener('click', () => {
+                const email = document.getElementById('email').value;
+                const password = document.getElementById('password').value;
+                
+                if (!email || !password) {
+                    alert('Please enter both email and password');
+                    return;
+                }
+                
+                // Simulate authentication
+                authState.isAuthenticated = true;
+                authState.user = {
+                    email: email,
+                    name: 'Demo User'
+                };
+                
+                // Update UI
+                const userMenuText = document.querySelector('#user-menu span');
+                if (userMenuText) {
+                    userMenuText.textContent = authState.user.name;
+                }
+                
+                // Close modal
+                elements.authModal.classList.remove('active');
+                
+                // Show welcome message
+                alert(`Welcome back, ${authState.user.name}!`);
+            });
+            
+            // Sign up button
+            elements.signupBtn.addEventListener('click', () => {
+                const name = document.getElementById('signup-name').value;
+                const email = document.getElementById('signup-email').value;
+                const password = document.getElementById('signup-password').value;
+                const confirm = document.getElementById('signup-confirm').value;
+                const terms = document.getElementById('terms').checked;
+                
+                if (!name || !email || !password || !confirm) {
+                    alert('Please fill in all fields');
+                    return;
+                }
+                
+                if (password !== confirm) {
+                    alert('Passwords do not match');
+                    return;
+                }
+                
+                if (!terms) {
+                    alert('You must agree to the terms and privacy policy');
+                    return;
+                }
+                
+                // Simulate registration
+                authState.isAuthenticated = true;
+                authState.user = {
+                    email: email,
+                    name: name
+                };
+                
+                // Update UI
+                const userMenuText = document.querySelector('#user-menu span');
+                if (userMenuText) {
+                    userMenuText.textContent = authState.user.name;
+                }
+                
+                // Close modal
+                elements.signupModal.classList.remove('active');
+                
+                // Show welcome message
+                alert(`Welcome to ClimateSphere, ${authState.user.name}!`);
+            });
+        }
+        
+        // Initialize App
+        function initApp() {
+            // Initialize 3D components
+            initGlobe();
+            initTempMap();
+            initPrecipMap();
+            
+            // Setup authentication
+            setupAuth();
+            
+            // Set current date
+            elements.currentDate.textContent = new Date().toLocaleDateString('en-US', { 
+                weekday: 'long', 
+                year: 'numeric', 
+                month: 'long', 
+                day: 'numeric' 
+            });
+            
+            // Fetch initial weather data
+            fetchWeatherData();
+            
+            // Setup event listeners
+            elements.unitSelector.addEventListener('change', (e) => {
+                fetchWeatherData(weatherData.userLocation, e.target.value);
+            });
+            
+            elements.refreshWeather.addEventListener('click', () => {
+                fetchWeatherData(weatherData.userLocation, weatherData.units);
+                
+                // Add loading animation
+                elements.refreshWeather.innerHTML = '<i class="fas fa-spinner fa-spin mr-2"></i> Refreshing';
+                setTimeout(() => {
+                    elements.refreshWeather.innerHTML = '<i class="fas fa-sync-alt mr-2"></i> Refresh';
+                }, 1000);
+            });
+        }
+        
+        // Start the app when DOM is loaded
+        document.addEventListener('DOMContentLoaded', initApp);
+    </script>
+</body>
+</html>
